@@ -13,6 +13,7 @@ import {
 	ExternalLink,
 	TextControl,
 	VisuallyHidden,
+	SelectControl,
 } from '@wordpress/components';
 import { Component, createRef, createInterpolateElement } from '@wordpress/element';
 import { withSelect, withDispatch, useDispatch } from '@wordpress/data';
@@ -62,6 +63,12 @@ const pluginPostStatusInfoPreviewCheckbox = css`
 	label {
 		max-width: 100%;
 	}
+`;
+
+const expiryControls = css`
+	margin-top: 12px;
+	padding-top: 12px;
+	border-top: 1px solid #e0e0e0;
 `;
 
 const copyButton = css`
@@ -114,11 +121,15 @@ class PreviewToggle extends Component {
 		this.state = {
 			previewEnabled: DSPublicPostPreviewData.previewEnabled,
 			previewUrl: DSPublicPostPreviewData.previewUrl,
+			expiryType: DSPublicPostPreviewData.expiryType || 'default',
+			expiryHours: DSPublicPostPreviewData.expiryHours || '',
 		};
 
 		this.previewUrlInput = createRef();
 
 		this.onChange = this.onChange.bind( this );
+		this.onExpiryTypeChange = this.onExpiryTypeChange.bind( this );
+		this.onExpiryHoursChange = this.onExpiryHoursChange.bind( this );
 		this.onPreviewUrlInputFocus = this.onPreviewUrlInputFocus.bind( this );
 	}
 
@@ -172,6 +183,16 @@ class PreviewToggle extends Component {
 			} );
 	}
 
+	onExpiryTypeChange( value ) {
+		this.setState( { expiryType: value } );
+		this.props.editPost( { meta: { _public_post_preview_expiry_type: value } } );
+	}
+
+	onExpiryHoursChange( value ) {
+		this.setState( { expiryHours: value } );
+		this.props.editPost( { meta: { _public_post_preview_expiry_hours: parseInt( value, 10 ) || 0 } } );
+	}
+
 	onPreviewUrlInputFocus() {
 		this.previewUrlInput.current.focus();
 		this.previewUrlInput.current.select();
@@ -187,7 +208,7 @@ class PreviewToggle extends Component {
 	}
 
 	render() {
-		const { previewEnabled, previewUrl } = this.state;
+		const { previewEnabled, previewUrl, expiryType, expiryHours } = this.state;
 
 		return (
 			<>
@@ -201,33 +222,60 @@ class PreviewToggle extends Component {
 						__nextHasNoMarginBottom
 					/>
 					{ previewEnabled && (
-						<div className={ pluginPostStatusInfoPreviewUrl }>
-							<div className={ pluginPostStatusInfoPreviewUrlInputWrapper }>
-								<TextControl
-									ref={ this.previewUrlInput }
-									hideLabelFromVision
-									label={ __( 'Preview URL', 'public-post-preview' ) }
-									value={ previewUrl }
-									readOnly
-									onFocus={ this.onPreviewUrlInputFocus }
-									className={ pluginPostStatusInfoPreviewUrlInput }
-									__next40pxDefaultSize
+						<>
+							<div className={ pluginPostStatusInfoPreviewUrl }>
+								<div className={ pluginPostStatusInfoPreviewUrlInputWrapper }>
+									<TextControl
+										ref={ this.previewUrlInput }
+										hideLabelFromVision
+										label={ __( 'Preview URL', 'public-post-preview' ) }
+										value={ previewUrl }
+										readOnly
+										onFocus={ this.onPreviewUrlInputFocus }
+										className={ pluginPostStatusInfoPreviewUrlInput }
+										__next40pxDefaultSize
+										__nextHasNoMarginBottom
+									/>
+									<CopyButton text={ previewUrl } />
+								</div>
+								<p className={ pluginPostStatusInfoPreviewDescription }>
+									{ createInterpolateElement(
+										__(
+											'Copy and share <a>the preview URL</a>.',
+											'public-post-preview'
+										),
+										{
+											a: <ExternalLink href={ previewUrl } />,
+										}
+									) }
+								</p>
+							</div>
+							<div className={ expiryControls }>
+								<SelectControl
+									label={ __( 'Preview expiration', 'public-post-preview' ) }
+									value={ expiryType }
+									options={ [
+										{ label: __( 'Use default setting', 'public-post-preview' ), value: 'default' },
+										{ label: __( 'Always available', 'public-post-preview' ), value: 'always' },
+										{ label: __( 'Custom time', 'public-post-preview' ), value: 'custom' },
+									] }
+									onChange={ this.onExpiryTypeChange }
 									__nextHasNoMarginBottom
 								/>
-								<CopyButton text={ previewUrl } />
-							</div>
-							<p className={ pluginPostStatusInfoPreviewDescription }>
-								{ createInterpolateElement(
-									__(
-										'Copy and share <a>the preview URL</a>.',
-										'public-post-preview'
-									),
-									{
-										a: <ExternalLink href={ previewUrl } />,
-									}
+								{ 'custom' === expiryType && (
+									<TextControl
+										label={ __( 'Expiration time (hours)', 'public-post-preview' ) }
+										type="number"
+										value={ expiryHours }
+										onChange={ this.onExpiryHoursChange }
+										min="1"
+										step="1"
+										__next40pxDefaultSize
+										__nextHasNoMarginBottom
+									/>
 								) }
-							</p>
-						</div>
+							</div>
+						</>
 					) }
 				</PluginPostStatusInfo>
 			</>
@@ -254,6 +302,7 @@ export default compose( [
 	withDispatch( ( dispatch ) => {
 		return {
 			createNotice: dispatch( noticesStore ).createNotice,
+			editPost: dispatch( editorStore ).editPost,
 		};
 	} ),
 ] )( PreviewToggle );
