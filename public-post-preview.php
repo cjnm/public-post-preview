@@ -65,6 +65,7 @@ class DS_Public_Post_Preview {
 			add_action( 'save_post', array( __CLASS__, 'register_public_preview' ), 20, 2 );
 			add_action( 'wp_ajax_public-post-preview', array( __CLASS__, 'ajax_register_public_preview' ) );
 			add_action( 'wp_ajax_public-post-preview-save-expiry', array( __CLASS__, 'ajax_save_expiry_settings' ) );
+			add_action( 'wp_ajax_public-post-preview-regenerate-link', array( __CLASS__, 'ajax_regenerate_preview_link' ) );
 			add_action( 'admin_enqueue_scripts', array( __CLASS__, 'enqueue_script' ) );
 			add_filter( 'display_post_states', array( __CLASS__, 'display_preview_state' ), 20, 2 );
 
@@ -447,6 +448,7 @@ class DS_Public_Post_Preview {
 				<input type="text" name="public_post_preview_link" class="regular-text" value="<?php echo esc_attr( $enabled ? self::get_preview_link( $post ) : '' ); ?>" style="width:99%" readonly />
 				<span class="description"><?php _e( 'Copy and share this preview URL.', 'public-post-preview' ); ?></span>
 			</label>
+			<button type="button" id="public-post-preview-regenerate-btn" class="button" style="margin-top:6px"><?php _e( 'Get New Link', 'public-post-preview' ); ?></button>
 		</div>
 
 		<div id="public-post-preview-expiry" style="margin-top:12px; padding-top:12px; border-top:1px solid #e0e0e0"<?php echo $enabled ? '' : ' class="ppp-hidden"'; ?>>
@@ -503,30 +505,23 @@ class DS_Public_Post_Preview {
 	}
 
 	/**
-	 * Generates a random preview nonce.
+	 * Generates a random nano ID.
 	 *
 	 * @since 3.1.0
 	 *
-	 * @return string MD5 hash of UUID + random salt.
+	 * @return string Random nano ID (21 characters).
 	 */
 	private static function generate_preview_nonce() {
-		// Generate a random UUID-like string
-		$uuid = sprintf(
-			'%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-			mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ),
-			mt_rand( 0, 0xffff ),
-			mt_rand( 0, 0x0fff ) | 0x4000,
-			mt_rand( 0, 0x3fff ) | 0x8000,
-			mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff )
-		);
+		// Nano ID alphabet (URL-safe)
+		$alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_-';
+		$id = '';
 		
-		// Generate random salt
-		$salt = wp_generate_password( 32, true, true );
+		// Generate 21 character nano ID
+		for ( $i = 0; $i < 21; $i++ ) {
+			$id .= $alphabet[ mt_rand( 0, strlen( $alphabet ) - 1 ) ];
+		}
 		
-		// Create MD5 hash of UUID + salt
-		$nonce = md5( $uuid . $salt );
-		
-		return $nonce;
+		return $id;
 	}
 
 	/**
@@ -573,12 +568,13 @@ class DS_Public_Post_Preview {
 		}
 
 		$args['preview'] = true;
-		$args['_ppp']    = '1';
 
-		// Add preview nonce if it exists
+		// Add preview nonce as _ppp parameter
 		$preview_nonce = get_post_meta( $post->ID, '_public_post_preview_nonce', true );
 		if ( $preview_nonce ) {
-			$args['_ppp_nonce'] = $preview_nonce;
+			$args['_ppp'] = $preview_nonce;
+		} else {
+			$args['_ppp'] = '1';
 		}
 
 		$link = add_query_arg( $args, home_url( '/' ) );
@@ -848,6 +844,45 @@ class DS_Public_Post_Preview {
 	}
 
 	/**
+	 * Regenerates the preview link nonce via AJAX.
+	 *
+	 * @since 3.1.0
+	 */
+	public static function ajax_regenerate_preview_link() {
+		if ( ! isset( $_POST['post_ID'] ) ) {
+			wp_send_json_error( 'incomplete_data' );
+		}
+
+		$post_id = (int) $_POST['post_ID'];
+
+		check_ajax_referer( 'public-post-preview_' . $post_id );
+
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			wp_send_json_error( 'cannot_edit' );
+		}
+
+		$post = get_post( $post_id );
+
+		if ( ! $post || in_array( $post->post_status, self::get_published_statuses(), true ) ) {
+			wp_send_json_error( 'invalid_post_status' );
+		}
+
+		// Check if preview is enabled
+		$preview_post_ids = self::get_preview_post_ids();
+		if ( ! in_array( $post_id, $preview_post_ids, true ) ) {
+			wp_send_json_error( 'preview_not_enabled' );
+		}
+
+		// Generate new nonce
+		$nonce = self::generate_preview_nonce();
+		update_post_meta( $post_id, '_public_post_preview_nonce', $nonce );
+
+		// Return new preview URL
+		$data = array( 'preview_url' => self::get_preview_link( $post ) );
+		wp_send_json_success( $data );
+	}
+
+	/**
 	 * Registers the new query var `_ppp`.
 	 *
 	 * @since 2.1.0
@@ -905,8 +940,8 @@ class DS_Public_Post_Preview {
 			wp_die( __( 'No public preview available!', 'public-post-preview' ), 404 );
 		}
 
-		// Verify preview nonce
-		$nonce = isset( $_GET['_ppp_nonce'] ) ? sanitize_text_field( $_GET['_ppp_nonce'] ) : '';
+		// Verify preview nonce from _ppp parameter
+		$nonce = isset( $_GET['_ppp'] ) ? sanitize_text_field( $_GET['_ppp'] ) : '';
 		if ( ! self::verify_preview_nonce( $nonce, $post_id ) ) {
 			wp_die( __( 'Invalid preview link!', 'public-post-preview' ), 403 );
 		}

@@ -12,6 +12,7 @@
 			t.checkbox = $( '#public-post-preview' );
 			t.link = $( '#public-post-preview-link' );
 			t.linkInput = t.link.find( 'input' );
+			t.regenerateBtn = $( '#public-post-preview-regenerate-btn' );
 			t.nonce = $( '#public_post_preview_wpnonce' );
 			t.status = $( '#public-post-preview-ajax' );
 			t.expirySection = $( '#public-post-preview-expiry' );
@@ -36,6 +37,10 @@
 
 			t.checkbox.bind( 'change', function () {
 				t.change();
+			} );
+
+			t.regenerateBtn.on( 'click', function () {
+				t.regenerateLink();
 			} );
 
 			t.expiryTypeSelect.on( 'change', function () {
@@ -264,6 +269,44 @@
 					console.log( 'Save error:', error );
 					// Show error message
 					t.status.text( 'Error saving settings' );
+					t._pulsate( t.status, 'red' );
+				},
+			} );
+		},
+
+		/**
+		 * Regenerates the preview link.
+		 *
+		 * @since 3.1.0
+		 */
+		regenerateLink: function () {
+			var t = this,
+				postId = $( '#post_ID' ).val(),
+				nonce = t.nonce.val();
+
+			console.log( 'Regenerating preview link for post:', postId );
+
+			var data = {
+				action: 'public-post-preview-regenerate-link',
+				_ajax_nonce: nonce,
+				post_ID: postId,
+			};
+
+			$.ajax( {
+				type: 'POST',
+				url: ajaxurl,
+				data: data,
+				success: function ( response ) {
+					console.log( 'Regenerate response:', response );
+					if ( response.success && response.data && response.data.preview_url ) {
+						t.linkInput.val( response.data.preview_url );
+						t.savedMsg.stop( true, true ).show().delay( 3000 ).fadeOut();
+					}
+				},
+				error: function ( error ) {
+					console.log( 'Regenerate error:', error );
+					// Show error message
+					t.status.text( 'Error regenerating link' );
 					t._pulsate( t.status, 'red' );
 				},
 			} );
