@@ -503,6 +503,48 @@ class DS_Public_Post_Preview {
 	}
 
 	/**
+	 * Generates a random preview nonce.
+	 *
+	 * @since 3.1.0
+	 *
+	 * @return string MD5 hash of UUID + random salt.
+	 */
+	private static function generate_preview_nonce() {
+		// Generate a random UUID-like string
+		$uuid = sprintf(
+			'%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+			mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ),
+			mt_rand( 0, 0xffff ),
+			mt_rand( 0, 0x0fff ) | 0x4000,
+			mt_rand( 0, 0x3fff ) | 0x8000,
+			mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff )
+		);
+		
+		// Generate random salt
+		$salt = wp_generate_password( 32, true, true );
+		
+		// Create MD5 hash of UUID + salt
+		$nonce = md5( $uuid . $salt );
+		
+		return $nonce;
+	}
+
+	/**
+	 * Verifies a preview nonce.
+	 *
+	 * @since 3.1.0
+	 *
+	 * @param string $nonce The nonce to verify.
+	 * @param int    $post_id The post ID.
+	 *
+	 * @return bool True if nonce is valid, false otherwise.
+	 */
+	private static function verify_preview_nonce( $nonce, $post_id ) {
+		$stored_nonce = get_post_meta( $post_id, '_public_post_preview_nonce', true );
+		return ! empty( $stored_nonce ) && hash_equals( $stored_nonce, $nonce );
+	}
+
+	/**
 	 * Returns the public preview link.
 	 *
 	 * The link is the home link with these parameters:
@@ -532,6 +574,12 @@ class DS_Public_Post_Preview {
 
 		$args['preview'] = true;
 		$args['_ppp']    = '1';
+
+		// Add preview nonce if it exists
+		$preview_nonce = get_post_meta( $post->ID, '_public_post_preview_nonce', true );
+		if ( $preview_nonce ) {
+			$args['_ppp_nonce'] = $preview_nonce;
+		}
 
 		$link = add_query_arg( $args, home_url( '/' ) );
 
@@ -716,12 +764,16 @@ class DS_Public_Post_Preview {
 			delete_post_meta( $preview_post_id, '_public_post_preview_expiry_type' );
 			delete_post_meta( $preview_post_id, '_public_post_preview_expiry_timestamp' );
 			delete_post_meta( $preview_post_id, '_public_post_preview_created' );
+			delete_post_meta( $preview_post_id, '_public_post_preview_nonce' );
 		} elseif ( 'true' === $checked && ! in_array( $preview_post_id, $preview_post_ids, true ) ) {
 			$preview_post_ids = array_merge( $preview_post_ids, (array) $preview_post_id );
 			// Set default expiry type when preview is enabled.
 			update_post_meta( $preview_post_id, '_public_post_preview_expiry_type', '48hours' );
 			// Set creation timestamp for 48-hour default expiry
 			update_post_meta( $preview_post_id, '_public_post_preview_created', time() );
+			// Generate and save preview nonce
+			$nonce = self::generate_preview_nonce();
+			update_post_meta( $preview_post_id, '_public_post_preview_nonce', $nonce );
 		} else {
 			wp_send_json_error( 'unknown_status' );
 		}
@@ -851,6 +903,12 @@ class DS_Public_Post_Preview {
 
 		if ( ! in_array( $post_id, self::get_preview_post_ids(), true ) ) {
 			wp_die( __( 'No public preview available!', 'public-post-preview' ), 404 );
+		}
+
+		// Verify preview nonce
+		$nonce = isset( $_GET['_ppp_nonce'] ) ? sanitize_text_field( $_GET['_ppp_nonce'] ) : '';
+		if ( ! self::verify_preview_nonce( $nonce, $post_id ) ) {
+			wp_die( __( 'Invalid preview link!', 'public-post-preview' ), 403 );
 		}
 
 		// Check expiry type and timestamp
