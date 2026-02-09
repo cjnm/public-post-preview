@@ -1,7 +1,7 @@
 === Public Post Preview ===
 Contributors: ocean90
 Tags: public, preview, posts, anonymous, drafts
-Stable tag: 3.0.1
+Stable tag: 3.1.0
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -69,6 +69,15 @@ function my_nonce_life() {
 **Note:** The setting UI is not visible if the filter is used.
 
 == Changelog ==
+
+= 3.1.0 (2026-02-09)
+* Replace nonce-based expiry system with timestamp-based expiry.
+* Add three expiry options: 48 hours (default), Always available, and Custom time.
+* Add custom time UI with Days, Hours, and Minutes inputs in classic editor.
+* Auto-save expiry settings via AJAX with success message.
+* Display expiry time for Custom time expiary type below the expiry selector.
+* Set default 48-hour expiry when preview is enabled.
+* Populate expiry values from database on page load.
 
 = 3.0.1 (2024-12-23): =
 * Fix calculation of expiration time for preview nonce.

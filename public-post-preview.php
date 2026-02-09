@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Public Post Preview
- * Version: 3.0.1
+ * Version: 3.1.0
  * Description: Allow anonymous users to preview a post before it is published.
  * Author: Dominik Schilling
  * Author URI: https://dominikschilling.de/
@@ -64,9 +64,9 @@ class DS_Public_Post_Preview {
 			add_action( 'post_submitbox_misc_actions', array( __CLASS__, 'post_submitbox_misc_actions' ) );
 			add_action( 'save_post', array( __CLASS__, 'register_public_preview' ), 20, 2 );
 			add_action( 'wp_ajax_public-post-preview', array( __CLASS__, 'ajax_register_public_preview' ) );
+			add_action( 'wp_ajax_public-post-preview-save-expiry', array( __CLASS__, 'ajax_save_expiry_settings' ) );
 			add_action( 'admin_enqueue_scripts', array( __CLASS__, 'enqueue_script' ) );
 			add_filter( 'display_post_states', array( __CLASS__, 'display_preview_state' ), 20, 2 );
-			add_action( 'admin_init', array( __CLASS__, 'register_settings_ui' ) );
 
 			foreach( self::get_post_types() as $post_type ) {
 				add_filter( "views_edit-$post_type", array( __CLASS__, 'add_list_table_view' ) );
@@ -81,49 +81,40 @@ class DS_Public_Post_Preview {
 	 * @since 3.0.0
 	 */
 	static function register_settings() {
-		register_setting(
-			'reading',
-			'public_post_preview_expiration_time',
+		// Register post meta for per-post expiry settings.
+		register_post_meta(
+			'',
+			'_public_post_preview_expiry_type',
 			array(
 				'show_in_rest' => true,
-				'type'         => 'integer',
-				'description'  => __( 'Default expiration time in seconds.', 'public-post-preview' ),
-				'default'      => 48,
+				'single'       => true,
+				'type'         => 'string',
+				'description'  => __( 'Preview expiry type: 48hours, always, or custom.', 'public-post-preview' ),
+				'default'      => '48hours',
 			)
 		);
-	}
 
-	/**
-	 * Registers the settings UI.
-	 *
-	 * @since 3.0.0
-	 */
-	static function register_settings_ui() {
-		if ( has_filter( 'ppp_nonce_life' ) ) {
-			return;
-		}
-
-		add_settings_section(
-			'public_post_preview',
-			__( 'Public Post Preview', 'public-post-preview' ),
-			'__return_false',
-			'reading'
+		register_post_meta(
+			'',
+			'_public_post_preview_expiry_timestamp',
+			array(
+				'show_in_rest' => true,
+				'single'       => true,
+				'type'         => 'integer',
+				'description'  => __( 'Preview expiry timestamp for custom expiry.', 'public-post-preview' ),
+				'default'      => 0,
+			)
 		);
 
-		add_settings_field(
-			'public_post_preview_expiration_time',
-			__( 'Expiration Time', 'public-post-preview' ),
-			static function() {
-				$value = get_option( 'public_post_preview_expiration_time' );
-				?>
-				<input type="number" id="public-post-preview-expiration-time" name="public_post_preview_expiration_time" value="<?php echo esc_attr( $value ); ?>" class="small-text" step="1" min="1" /> <?php _e( 'hours', 'public-post-preview' ); ?>
-				<p class="description"><?php _e( 'Default expiration time of a preview link in hours.', 'public-post-preview' ); ?></p>
-				<?php
-			},
-			'reading',
-			'public_post_preview',
+		register_post_meta(
+			'',
+			'_public_post_preview_created',
 			array(
-				'label_for' => 'public-post-preview-expiration-time',
+				'show_in_rest' => true,
+				'single'       => true,
+				'type'         => 'integer',
+				'description'  => __( 'Timestamp when preview was created.', 'public-post-preview' ),
+				'default'      => 0,
 			)
 		);
 	}
@@ -160,6 +151,7 @@ class DS_Public_Post_Preview {
 
 			$post            = get_post();
 			$preview_enabled = self::is_public_preview_enabled( $post );
+
 			wp_localize_script(
 				'public-post-preview-gutenberg',
 				'DSPublicPostPreviewData',
@@ -176,7 +168,7 @@ class DS_Public_Post_Preview {
 				'public-post-preview',
 				plugins_url( "js/public-post-preview$suffix.js", __FILE__ ),
 				array( 'jquery' ),
-				'20221611',
+				'3.1.0',
 				true
 			);
 
@@ -394,15 +386,105 @@ class DS_Public_Post_Preview {
 		wp_nonce_field( 'public-post-preview_' . $post->ID, 'public_post_preview_wpnonce' );
 
 		$enabled = self::is_public_preview_enabled( $post );
+		$expiry_type = get_post_meta( $post->ID, '_public_post_preview_expiry_type', true ) ?: '48hours';
+		$expiry_timestamp = (int) get_post_meta( $post->ID, '_public_post_preview_expiry_timestamp', true );
+		$preview_created = (int) get_post_meta( $post->ID, '_public_post_preview_created', true );
+		
+		// Calculate days, hours, minutes from timestamp if custom
+		$days = 0;
+		$hours = 0;
+		$minutes = 0;
+		if ( 'custom' === $expiry_type && $expiry_timestamp > 0 ) {
+			$seconds = $expiry_timestamp - time();
+			if ( $seconds > 0 ) {
+				$days = intdiv( $seconds, 86400 );
+				$seconds = $seconds % 86400;
+				$hours = intdiv( $seconds, 3600 );
+				$seconds = $seconds % 3600;
+				$minutes = intdiv( $seconds, 60 );
+			}
+		} elseif ( 'custom' === $expiry_type ) {
+			// Default to 48 hours if custom is selected but no timestamp is set
+			$hours = 48;
+		}
 		?>
+		<style>
+			.ppp-hidden { display: none !important; }
+			#public-post-preview-saved-msg {
+				margin-top: 8px;
+				padding: 8px 12px;
+				background-color: #d4edda;
+				border: 1px solid #c3e6cb;
+				border-radius: 4px;
+				color: #155724;
+				display: none;
+			}
+			.ppp-time-inputs {
+				display: flex;
+				gap: 8px;
+				align-items: flex-end;
+				margin-top: 8px;
+			}
+			.ppp-time-input-group {
+				display: flex;
+				flex-direction: column;
+			}
+			.ppp-time-input-group label {
+				font-size: 12px;
+				margin-bottom: 4px;
+				font-weight: 500;
+			}
+			.ppp-time-input-group input {
+				width: 60px;
+				padding: 4px 8px;
+			}
+		</style>
 		<label><input type="checkbox"<?php checked( $enabled ); ?> name="public_post_preview" id="public-post-preview" value="1" />
 		<?php _e( 'Enable public preview', 'public-post-preview' ); ?> <span id="public-post-preview-ajax"></span></label>
 
-		<div id="public-post-preview-link" style="margin-top:6px"<?php echo $enabled ? '' : ' class="hidden"'; ?>>
+		<div id="public-post-preview-link" style="margin-top:6px"<?php echo $enabled ? '' : ' class="ppp-hidden"'; ?>>
 			<label>
 				<input type="text" name="public_post_preview_link" class="regular-text" value="<?php echo esc_attr( $enabled ? self::get_preview_link( $post ) : '' ); ?>" style="width:99%" readonly />
 				<span class="description"><?php _e( 'Copy and share this preview URL.', 'public-post-preview' ); ?></span>
 			</label>
+		</div>
+
+		<div id="public-post-preview-expiry" style="margin-top:12px; padding-top:12px; border-top:1px solid #e0e0e0"<?php echo $enabled ? '' : ' class="ppp-hidden"'; ?>>
+			<label for="public-post-preview-expiry-type" style="display:block; margin-bottom:6px">
+				<?php _e( 'Preview expiration', 'public-post-preview' ); ?>
+			</label>
+			<select id="public-post-preview-expiry-type" name="public_post_preview_expiry_type" style="width:100%; max-width:300px" data-expiry-timestamp="<?php echo esc_attr( $expiry_timestamp ); ?>" data-preview-created="<?php echo esc_attr( $preview_created ); ?>">
+				<option value="48hours" <?php selected( $expiry_type, '48hours' ); ?>><?php _e( '48 hours', 'public-post-preview' ); ?></option>
+				<option value="always" <?php selected( $expiry_type, 'always' ); ?>><?php _e( 'Always available', 'public-post-preview' ); ?></option>
+				<option value="custom" <?php selected( $expiry_type, 'custom' ); ?>><?php _e( 'Custom time', 'public-post-preview' ); ?></option>
+			</select>
+
+			<div id="public-post-preview-expiry-display" style="margin-top:8px; font-size:12px; color:#666;"></div>
+
+			<div id="public-post-preview-custom-time" style="margin-top:12px"<?php echo 'custom' === $expiry_type ? '' : ' class="ppp-hidden"'; ?>>
+				<label style="display:block; margin-bottom:8px; font-weight: 500">
+					<?php _e( 'Set expiration time', 'public-post-preview' ); ?>
+				</label>
+				<div class="ppp-time-inputs">
+					<div class="ppp-time-input-group">
+						<label for="public-post-preview-days"><?php _e( 'Days', 'public-post-preview' ); ?></label>
+						<input type="number" id="public-post-preview-days" name="public_post_preview_days" value="<?php echo esc_attr( $days ); ?>" min="0" max="365" />
+					</div>
+					<div class="ppp-time-input-group">
+						<label for="public-post-preview-hours"><?php _e( 'Hours', 'public-post-preview' ); ?></label>
+						<input type="number" id="public-post-preview-hours" name="public_post_preview_hours" value="<?php echo esc_attr( $hours ); ?>" min="0" max="23" />
+					</div>
+					<div class="ppp-time-input-group">
+						<label for="public-post-preview-minutes"><?php _e( 'Minutes', 'public-post-preview' ); ?></label>
+						<input type="number" id="public-post-preview-minutes" name="public_post_preview_minutes" value="<?php echo esc_attr( $minutes ); ?>" min="0" max="59" />
+					</div>
+				</div>
+				<div id="public-post-preview-expiry-time" style="margin-top:8px; font-size:12px; color:#666;"></div>
+			</div>
+
+			<div id="public-post-preview-saved-msg">
+				<?php _e( 'Settings saved!', 'public-post-preview' ); ?>
+			</div>
 		</div>
 		<?php
 	}
@@ -425,7 +507,6 @@ class DS_Public_Post_Preview {
 	 *
 	 * The link is the home link with these parameters:
 	 *  - preview, always true (query var for core)
-	 *  - _ppp, a custom nonce, see DS_Public_Post_Preview::create_nonce()
 	 *  - page_id or p or p and post_type to specify the post.
 	 *
 	 * @since 2.0.0
@@ -450,7 +531,7 @@ class DS_Public_Post_Preview {
 		}
 
 		$args['preview'] = true;
-		$args['_ppp']    = self::create_nonce( 'public_post_preview_' . $post->ID );
+		$args['_ppp']    = '1';
 
 		$link = add_query_arg( $args, home_url( '/' ) );
 
@@ -487,9 +568,11 @@ class DS_Public_Post_Preview {
 
 		$preview_post_ids = self::get_preview_post_ids();
 		$preview_post_id  = (int) $post->ID;
+		$preview_changed  = false;
 
 		if ( empty( $_POST['public_post_preview'] ) && in_array( $preview_post_id, $preview_post_ids, true ) ) {
 			$preview_post_ids = array_diff( $preview_post_ids, (array) $preview_post_id );
+			$preview_changed  = true;
 		} elseif (
 			! empty( $_POST['public_post_preview'] ) &&
 			! empty( $_POST['original_post_status'] ) &&
@@ -497,13 +580,44 @@ class DS_Public_Post_Preview {
 			in_array( $post->post_status, self::get_published_statuses(), true )
 		) {
 			$preview_post_ids = array_diff( $preview_post_ids, (array) $preview_post_id );
+			$preview_changed  = true;
 		} elseif ( ! empty( $_POST['public_post_preview'] ) && ! in_array( $preview_post_id, $preview_post_ids, true ) ) {
 			$preview_post_ids = array_merge( $preview_post_ids, (array) $preview_post_id );
+			$preview_changed  = true;
+		}
+
+		// Save per-post expiry settings if provided.
+		if ( ! empty( $_POST['public_post_preview'] ) ) {
+			$expiry_type = isset( $_POST['public_post_preview_expiry_type'] ) ? sanitize_text_field( $_POST['public_post_preview_expiry_type'] ) : '48hours';
+			update_post_meta( $post_id, '_public_post_preview_expiry_type', $expiry_type );
 		} else {
+			// Clear expiry settings when preview is disabled.
+			delete_post_meta( $post_id, '_public_post_preview_expiry_type' );
+			delete_post_meta( $post_id, '_public_post_preview_expiry_timestamp' );
+			delete_post_meta( $post_id, '_public_post_preview_created' );
+		}
+
+		if ( ! $preview_changed ) {
 			return false; // Nothing has changed.
 		}
 
 		return self::set_preview_post_ids( $preview_post_ids );
+	}
+
+	/**
+	 * Saves per-post expiry settings when a post is saved.
+	 *
+	 * This runs after register_public_preview to ensure expiry settings
+	 * are saved even when the preview status doesn't change.
+	 *
+	 * @since 3.1.0
+	 *
+	 * @param int    $post_id The post id.
+	 * @param object $post    The post object.
+	 * @return bool Returns false (settings are saved via AJAX).
+	 */
+	public static function save_expiry_settings( $post_id, $post ) {
+		return false; // Settings are saved via AJAX
 	}
 
 	/**
@@ -598,8 +712,16 @@ class DS_Public_Post_Preview {
 
 		if ( 'false' === $checked && in_array( $preview_post_id, $preview_post_ids, true ) ) {
 			$preview_post_ids = array_diff( $preview_post_ids, (array) $preview_post_id );
+			// Clear expiry settings when preview is disabled.
+			delete_post_meta( $preview_post_id, '_public_post_preview_expiry_type' );
+			delete_post_meta( $preview_post_id, '_public_post_preview_expiry_timestamp' );
+			delete_post_meta( $preview_post_id, '_public_post_preview_created' );
 		} elseif ( 'true' === $checked && ! in_array( $preview_post_id, $preview_post_ids, true ) ) {
 			$preview_post_ids = array_merge( $preview_post_ids, (array) $preview_post_id );
+			// Set default expiry type when preview is enabled.
+			update_post_meta( $preview_post_id, '_public_post_preview_expiry_type', '48hours' );
+			// Set creation timestamp for 48-hour default expiry
+			update_post_meta( $preview_post_id, '_public_post_preview_created', time() );
 		} else {
 			wp_send_json_error( 'unknown_status' );
 		}
@@ -616,6 +738,61 @@ class DS_Public_Post_Preview {
 		}
 
 		wp_send_json_success( $data );
+	}
+
+	/**
+	 * Saves expiry settings via AJAX for the classic editor.
+	 *
+	 * @since 3.1.0
+	 */
+	public static function ajax_save_expiry_settings() {
+		if ( ! isset( $_POST['post_ID'] ) ) {
+			wp_send_json_error( 'incomplete_data' );
+		}
+
+		$post_id = (int) $_POST['post_ID'];
+
+		check_ajax_referer( 'public-post-preview_' . $post_id );
+
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			wp_send_json_error( 'cannot_edit' );
+		}
+
+		$post = get_post( $post_id );
+
+		if ( ! $post || in_array( $post->post_status, self::get_published_statuses(), true ) ) {
+			wp_send_json_error( 'invalid_post_status' );
+		}
+
+		// Check if preview is enabled
+		$preview_post_ids = self::get_preview_post_ids();
+		if ( ! in_array( $post_id, $preview_post_ids, true ) ) {
+			wp_send_json_error( 'preview_not_enabled' );
+		}
+
+		$expiry_type = isset( $_POST['expiry_type'] ) ? sanitize_text_field( $_POST['expiry_type'] ) : '48hours';
+		update_post_meta( $post_id, '_public_post_preview_expiry_type', $expiry_type );
+
+		if ( 'custom' === $expiry_type ) {
+			$days = isset( $_POST['days'] ) ? (int) $_POST['days'] : 0;
+			$hours = isset( $_POST['hours'] ) ? (int) $_POST['hours'] : 0;
+			$minutes = isset( $_POST['minutes'] ) ? (int) $_POST['minutes'] : 0;
+
+			// Calculate total seconds
+			$total_seconds = ( $days * 86400 ) + ( $hours * 3600 ) + ( $minutes * 60 );
+
+			if ( $total_seconds > 0 ) {
+				// Calculate expiry timestamp
+				$expiry_timestamp = time() + $total_seconds;
+				update_post_meta( $post_id, '_public_post_preview_expiry_timestamp', $expiry_timestamp );
+			} else {
+				delete_post_meta( $post_id, '_public_post_preview_expiry_timestamp' );
+			}
+		} else {
+			delete_post_meta( $post_id, '_public_post_preview_expiry_timestamp' );
+		}
+
+		wp_send_json_success();
 	}
 
 	/**
@@ -660,7 +837,7 @@ class DS_Public_Post_Preview {
 
 	/**
 	 * Checks if a public preview is available and allowed.
-	 * Verifies the nonce and if the post id is registered for a public preview.
+	 * Verifies the timestamp expiry and if the post id is registered for a public preview.
 	 *
 	 * @since 2.0.0
 	 *
@@ -672,12 +849,36 @@ class DS_Public_Post_Preview {
 			return false;
 		}
 
-		if ( ! self::verify_nonce( get_query_var( '_ppp' ), 'public_post_preview_' . $post_id ) ) {
-			wp_die( __( 'This link has expired!', 'public-post-preview' ), 403 );
-		}
-
 		if ( ! in_array( $post_id, self::get_preview_post_ids(), true ) ) {
 			wp_die( __( 'No public preview available!', 'public-post-preview' ), 404 );
+		}
+
+		// Check expiry type and timestamp
+		$expiry_type = get_post_meta( $post_id, '_public_post_preview_expiry_type', true ) ?: '48hours';
+
+		// Set default creation timestamp if not set
+		$preview_created = get_post_meta( $post_id, '_public_post_preview_created', true );
+		if ( ! $preview_created ) {
+			$preview_created = time();
+			update_post_meta( $post_id, '_public_post_preview_created', $preview_created );
+		}
+
+		if ( 'always' === $expiry_type ) {
+			// Always available, no expiry check needed
+			return true;
+		}
+
+		if ( 'custom' === $expiry_type ) {
+			$expiry_timestamp = (int) get_post_meta( $post_id, '_public_post_preview_expiry_timestamp', true );
+			if ( $expiry_timestamp > 0 && time() > $expiry_timestamp ) {
+				wp_die( __( 'This link has expired!', 'public-post-preview' ), 403 );
+			}
+			return true;
+		}
+
+		// Default 48 hours - check if preview was created more than 48 hours ago
+		if ( time() > ( $preview_created + ( 48 * HOUR_IN_SECONDS ) ) ) {
+			wp_die( __( 'This link has expired!', 'public-post-preview' ), 403 );
 		}
 
 		return true;
@@ -755,66 +956,6 @@ class DS_Public_Post_Preview {
 
 		wp_safe_redirect( get_permalink( $post_id ), 301 );
 		exit;
-	}
-
-	/**
-	 * Get the time-dependent variable for nonce creation.
-	 *
-	 * @see wp_nonce_tick()
-	 *
-	 * @since 2.1.0
-	 *
-	 * @return int The time-dependent variable.
-	 */
-	private static function nonce_tick() {
-		$expiration = get_option( 'public_post_preview_expiration_time' ) ?: 48;
-		$nonce_life = apply_filters( 'ppp_nonce_life', $expiration * HOUR_IN_SECONDS );
-
-		return ceil( time() / ( $nonce_life / 2 ) );
-	}
-
-	/**
-	 * Creates a random, one time use token. Without an UID.
-	 *
-	 * @see wp_create_nonce()
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param  string|int $action Scalar value to add context to the nonce.
-	 * @return string The one use form token.
-	 */
-	private static function create_nonce( $action = -1 ) {
-		$i = self::nonce_tick();
-
-		return substr( wp_hash( $i . $action, 'nonce' ), -12, 10 );
-	}
-
-	/**
-	 * Verifies that correct nonce was used with time limit. Without an UID.
-	 *
-	 * @see wp_verify_nonce()
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param string     $nonce  Nonce that was used in the form to verify.
-	 * @param string|int $action Should give context to what is taking place and be the same when nonce was created.
-	 * @return bool               Whether the nonce check passed or failed.
-	 */
-	private static function verify_nonce( $nonce, $action = -1 ) {
-		$i = self::nonce_tick();
-
-		// Nonce generated 0-12 hours ago.
-		if ( substr( wp_hash( $i . $action, 'nonce' ), -12, 10 ) === $nonce ) {
-			return 1;
-		}
-
-		// Nonce generated 12-24 hours ago.
-		if ( substr( wp_hash( ( $i - 1 ) . $action, 'nonce' ), -12, 10 ) === $nonce ) {
-			return 2;
-		}
-
-		// Invalid nonce.
-		return false;
 	}
 
 	/**

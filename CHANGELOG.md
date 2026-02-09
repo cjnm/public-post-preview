@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.0 (2026-02-09)
+* Replace nonce-based expiry system with timestamp-based expiry.
+* Add three expiry options: 48 hours (default), Always available, and Custom time.
+* Add custom time UI with Days, Hours, and Minutes inputs in classic editor.
+* Auto-save expiry settings via AJAX with success message.
+* Display expiry time for Custom time expiary type below the expiry selector.
+* Set default 48-hour expiry when preview is enabled.
+* Populate expiry values from database on page load.
+
 ## 3.0.1 (2024-12-23)
 * Fix calculation of expiration time for preview nonce.
 
