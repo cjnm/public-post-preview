@@ -23,6 +23,7 @@
 			t.savedMsg = $( '#public-post-preview-saved-msg' );
 			t.expiryTimeDisplay = $( '#public-post-preview-expiry-time' );
 			t.expiryDisplayMain = $( '#public-post-preview-expiry-display' );
+			t.previousExpiryType = t.expiryTypeSelect.val();
 
 			console.log( 'DSPublicPostPreview initialized', {
 				checkbox: t.checkbox.length,
@@ -145,11 +146,12 @@
 				t.hoursInput.prop( 'disabled', false );
 				t.minutesInput.prop( 'disabled', false );
 
-				// Set default 48 hours if all fields are empty
-				if ( ! t.daysInput.val() && ! t.hoursInput.val() && ! t.minutesInput.val() ) {
+				// Set default 48 hours only if switching from another state to custom and all fields are empty
+				if ( 'custom' !== t.previousExpiryType && ! t.daysInput.val() && ! t.hoursInput.val() && ! t.minutesInput.val() ) {
 					t.hoursInput.val( 48 );
 					// Save immediately with the default 48 hours
 					t.saveExpirySettings();
+					t.previousExpiryType = expiryType;
 					return;
 				}
 			} else {
@@ -159,6 +161,7 @@
 				t.minutesInput.prop( 'disabled', true );
 			}
 
+			t.previousExpiryType = expiryType;
 			// Save expiry settings via AJAX
 			t.saveExpirySettings();
 		},
@@ -200,7 +203,7 @@
 					minutes = parseInt( t.minutesInput.val() ) || 0;
 
 				if ( days === 0 && hours === 0 && minutes === 0 ) {
-					t.expiryTimeDisplay.text( '' );
+					t.expiryTimeDisplay.text( 'Preview has expired' );
 					return;
 				}
 
