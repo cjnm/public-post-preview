@@ -12,7 +12,9 @@
 			t.checkbox = $( '#public-post-preview' );
 			t.link = $( '#public-post-preview-link' );
 			t.linkInput = t.link.find( 'input' );
+			t.copyBtn = $( '#public-post-preview-copy-btn' );
 			t.regenerateBtn = $( '#public-post-preview-regenerate-btn' );
+			t.linkMsg = $( '#public-post-preview-link-msg' );
 			t.nonce = $( '#public_post_preview_wpnonce' );
 			t.status = $( '#public-post-preview-ajax' );
 			t.expirySection = $( '#public-post-preview-expiry' );
@@ -39,12 +41,17 @@
 				t.change();
 			} );
 
+			t.copyBtn.on( 'click', function () {
+				t.copyLink();
+			} );
+
 			t.regenerateBtn.on( 'click', function () {
 				t.regenerateLink();
 			} );
 
 			t.expiryTypeSelect.on( 'change', function () {
 				t.toggleCustomTime();
+				t.updateExpiryDisplay();
 				t.saveExpirySettings();
 			} );
 
@@ -151,9 +158,14 @@
 				t.hoursInput.prop( 'disabled', false );
 				t.minutesInput.prop( 'disabled', false );
 
-				// Set default 48 hours only if switching from another state to custom and all fields are empty
-				if ( 'custom' !== t.previousExpiryType && ! t.daysInput.val() && ! t.hoursInput.val() && ! t.minutesInput.val() ) {
+				// Set default 48 hours only if switching from another state to custom and fields have no value attribute
+				var daysVal = t.daysInput.val();
+				var hoursVal = t.hoursInput.val();
+				var minutesVal = t.minutesInput.val();
+				
+				if ( 'custom' !== t.previousExpiryType && daysVal === '' && hoursVal === '' && minutesVal === '' ) {
 					t.hoursInput.val( 48 );
+					t.updateExpiryDisplay();
 					// Save immediately with the default 48 hours
 					t.saveExpirySettings();
 					t.previousExpiryType = expiryType;
@@ -167,6 +179,7 @@
 			}
 
 			t.previousExpiryType = expiryType;
+			t.updateExpiryDisplay();
 			// Save expiry settings via AJAX
 			t.saveExpirySettings();
 		},
@@ -300,16 +313,58 @@
 					console.log( 'Regenerate response:', response );
 					if ( response.success && response.data && response.data.preview_url ) {
 						t.linkInput.val( response.data.preview_url );
-						t.savedMsg.stop( true, true ).show().delay( 3000 ).fadeOut();
+						t.linkMsg.text( 'New link generated! Old link no longer works.' ).stop( true, true ).show().delay( 5000 ).fadeOut();
 					}
 				},
 				error: function ( error ) {
 					console.log( 'Regenerate error:', error );
 					// Show error message
-					t.status.text( 'Error regenerating link' );
-					t._pulsate( t.status, 'red' );
+					t.linkMsg.text( 'Error regenerating link' ).stop( true, true ).show().delay( 5000 ).fadeOut();
 				},
 			} );
+		},
+
+		/**
+		 * Copies the preview link to clipboard.
+		 *
+		 * @since 3.1.0
+		 */
+		copyLink: function () {
+			var t = this,
+				link = t.linkInput.val();
+
+			if ( ! link ) {
+				return;
+			}
+
+			// Copy to clipboard
+			if ( navigator.clipboard && navigator.clipboard.writeText ) {
+				navigator.clipboard.writeText( link ).then( function () {
+					t.linkMsg.text( 'Link copied to clipboard!' ).stop( true, true ).show().delay( 3000 ).fadeOut();
+				} ).catch( function () {
+					// Fallback for older browsers
+					t.selectAndCopy();
+				} );
+			} else {
+				// Fallback for older browsers
+				t.selectAndCopy();
+			}
+		},
+
+		/**
+		 * Fallback copy method for older browsers.
+		 *
+		 * @since 3.1.0
+		 */
+		selectAndCopy: function () {
+			var t = this;
+			t.linkInput.select();
+			try {
+				document.execCommand( 'copy' );
+				t.linkMsg.text( 'Link copied to clipboard!' ).stop( true, true ).show().delay( 3000 ).fadeOut();
+			} catch ( err ) {
+				t.linkMsg.text( 'Failed to copy link' ).stop( true, true ).show().delay( 3000 ).fadeOut();
+			}
 		},
 
 		/**

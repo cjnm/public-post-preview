@@ -448,7 +448,11 @@ class DS_Public_Post_Preview {
 				<input type="text" name="public_post_preview_link" class="regular-text" value="<?php echo esc_attr( $enabled ? self::get_preview_link( $post ) : '' ); ?>" style="width:99%" readonly />
 				<span class="description"><?php _e( 'Copy and share this preview URL.', 'public-post-preview' ); ?></span>
 			</label>
-			<button type="button" id="public-post-preview-regenerate-btn" class="button" style="margin-top:6px"><?php _e( 'Get New Link', 'public-post-preview' ); ?></button>
+			<div style="margin-top:6px; display:flex; gap:6px;">
+				<button type="button" id="public-post-preview-copy-btn" class="button"><?php _e( 'Copy Link', 'public-post-preview' ); ?></button>
+				<button type="button" id="public-post-preview-regenerate-btn" class="button"><?php _e( 'Generate New Link', 'public-post-preview' ); ?></button>
+			</div>
+			<div id="public-post-preview-link-msg" style="margin-top:8px; padding:8px 12px; background-color:#d4edda; border:1px solid #c3e6cb; border-radius:4px; color:#155724; display:none;"></div>
 		</div>
 
 		<div id="public-post-preview-expiry" style="margin-top:12px; padding-top:12px; border-top:1px solid #e0e0e0"<?php echo $enabled ? '' : ' class="ppp-hidden"'; ?>>
@@ -834,7 +838,8 @@ class DS_Public_Post_Preview {
 				$expiry_timestamp = time() + $total_seconds;
 				update_post_meta( $post_id, '_public_post_preview_expiry_timestamp', $expiry_timestamp );
 			} else {
-				delete_post_meta( $post_id, '_public_post_preview_expiry_timestamp' );
+				// Set expiry to current time (expired immediately)
+				update_post_meta( $post_id, '_public_post_preview_expiry_timestamp', time() );
 			}
 		} else {
 			delete_post_meta( $post_id, '_public_post_preview_expiry_timestamp' );
